@@ -1,0 +1,14 @@
+{
+  "id": "author-notes-viewer",
+  "name": "Author Notes Viewer",
+  "version": "1.0.0",
+  "description": "Displays the current character's author notes (creator_notes) in a dedicated drawer tab with full HTML and CSS formatting support.",
+  "author": "author-notes-viewer",
+  "permissions": [
+    "characters"
+  ],
+  "entry": {
+    "backend": "dist/backend.js",
+    "frontend": "dist/frontend.js"
+  }
+}
