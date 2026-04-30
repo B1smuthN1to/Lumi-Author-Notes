@@ -1,379 +1,419 @@
-// src/frontend.ts
-var ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M14.5 2.5a2.121 2.121 0 0 1 3 3L6 17l-4 1 1-4 11.5-11.5z"/>
-</svg>`;
-var PANEL_STYLES = `
-  <style>
-    .an-panel {
+// Author Notes — frontend.js (compiled from src/frontend.ts)
+// Injects a "Creator Notes" accordion into the character profile sidebar tab,
+// positioned between Description and Personality, matching their visual style.
+
+export function setup(ctx) {
+  // ─── Constants ────────────────────────────────────────────────────────────
+  const PANEL_ID = 'spindle-author-notes-panel';
+
+  // ─── State ────────────────────────────────────────────────────────────────
+  let currentCharacterId = null;
+  let currentNotes = '';
+  let isOpen = false;
+  let observer = null;
+  let pendingInjectTimer = null;
+
+  // ─── Styles ───────────────────────────────────────────────────────────────
+  const removeStyle = ctx.dom.addStyle(`
+    #${PANEL_ID} {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      width: 100%;
       box-sizing: border-box;
-      font-family: inherit;
     }
-
-    /* \u2500\u2500 Empty / loading states \u2500\u2500 */
-    .an-empty {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      flex: 1;
-      padding: 24px;
-      text-align: center;
-      color: var(--lumiverse-text-dim, #888);
-    }
-    .an-empty svg {
-      opacity: 0.35;
-    }
-    .an-empty p {
-      margin: 0;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    /* \u2500\u2500 Character header bar \u2500\u2500 */
-    .an-header {
+    .an-accordion-header {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 14px 8px;
-      border-bottom: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1));
-      flex-shrink: 0;
-    }
-    .an-header-avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.07));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      flex-shrink: 0;
-      overflow: hidden;
-    }
-    .an-header-avatar img {
+      padding: 10px 14px;
+      cursor: pointer;
+      user-select: none;
+      background: transparent;
+      border: none;
       width: 100%;
-      height: 100%;
-      object-fit: cover;
-      border-radius: 50%;
+      text-align: left;
+      color: var(--lumiverse-text);
+      border-radius: var(--lumiverse-radius);
+      transition: background var(--lumiverse-transition-fast, 0.15s ease);
+      outline: none;
     }
-    .an-header-name {
+    .an-accordion-header:hover {
+      background: var(--lumiverse-fill-subtle);
+    }
+    .an-icon {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      color: var(--lumiverse-text-muted);
+      opacity: 0.75;
+    }
+    .an-title {
+      flex: 1;
       font-size: 13px;
       font-weight: 600;
-      color: var(--lumiverse-text, #fff);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
+      color: var(--lumiverse-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
-    .an-refresh-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--lumiverse-text-dim, #888);
-      padding: 4px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: color 0.15s, background 0.15s;
+    .an-chevron {
       flex-shrink: 0;
+      width: 14px;
+      height: 14px;
+      color: var(--lumiverse-text-dim);
+      transition: transform var(--lumiverse-transition-fast, 0.15s ease);
     }
-    .an-refresh-btn:hover {
-      color: var(--lumiverse-text, #fff);
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.07));
+    .an-chevron.open {
+      transform: rotate(180deg);
     }
-    .an-refresh-btn.spinning svg {
-      animation: an-spin 0.7s linear infinite;
+    .an-body {
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.22s ease, opacity 0.18s ease;
+      opacity: 0;
+      pointer-events: none;
     }
-    @keyframes an-spin {
-      to { transform: rotate(360deg); }
+    .an-body.open {
+      max-height: 2000px;
+      opacity: 1;
+      pointer-events: auto;
     }
-
-    /* \u2500\u2500 Notes content area \u2500\u2500 */
     .an-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 14px;
-      scrollbar-width: thin;
-      scrollbar-color: var(--lumiverse-border, rgba(255,255,255,0.15)) transparent;
-    }
-    .an-content::-webkit-scrollbar { width: 5px; }
-    .an-content::-webkit-scrollbar-track { background: transparent; }
-    .an-content::-webkit-scrollbar-thumb {
-      background: var(--lumiverse-border, rgba(255,255,255,0.15));
-      border-radius: 3px;
-    }
-
-    /* \u2500\u2500 Rendered notes typography \u2014 these apply inside .an-notes-body \u2500\u2500 */
-    .an-notes-body {
+      padding: 4px 14px 14px 14px;
       font-size: 13px;
-      line-height: 1.65;
-      color: var(--lumiverse-text, #e8e8e8);
+      line-height: 1.6;
+      color: var(--lumiverse-text);
       word-break: break-word;
     }
-    .an-notes-body h1,
-    .an-notes-body h2,
-    .an-notes-body h3,
-    .an-notes-body h4,
-    .an-notes-body h5,
-    .an-notes-body h6 {
-      margin: 1em 0 0.4em;
-      line-height: 1.3;
-      color: var(--lumiverse-text, #fff);
-      font-weight: 700;
+    .an-content p { margin: 0 0 8px 0; }
+    .an-content p:last-child { margin-bottom: 0; }
+    .an-content a { color: var(--lumiverse-accent); text-decoration: underline; }
+    .an-content strong, .an-content b { font-weight: 600; }
+    .an-content em, .an-content i { font-style: italic; }
+    .an-content ul, .an-content ol { padding-left: 20px; margin: 6px 0; }
+    .an-content li { margin-bottom: 4px; }
+    .an-content hr { border: none; border-top: 1px solid var(--lumiverse-border); margin: 10px 0; }
+    .an-content h1, .an-content h2, .an-content h3 {
+      font-weight: 600;
+      margin: 10px 0 4px 0;
+      color: var(--lumiverse-text);
     }
-    .an-notes-body h1 { font-size: 18px; }
-    .an-notes-body h2 { font-size: 16px; }
-    .an-notes-body h3 { font-size: 14px; }
-    .an-notes-body h4,
-    .an-notes-body h5,
-    .an-notes-body h6 { font-size: 13px; }
-    .an-notes-body p { margin: 0 0 0.75em; }
-    .an-notes-body ul,
-    .an-notes-body ol {
-      padding-left: 20px;
-      margin: 0 0 0.75em;
-    }
-    .an-notes-body li { margin-bottom: 0.25em; }
-    .an-notes-body a {
-      color: var(--lumiverse-accent, #7c9fff);
-      text-decoration: none;
-    }
-    .an-notes-body a:hover { text-decoration: underline; }
-    .an-notes-body strong, .an-notes-body b { font-weight: 700; }
-    .an-notes-body em, .an-notes-body i { font-style: italic; }
-    .an-notes-body code {
+    .an-content h1 { font-size: 15px; }
+    .an-content h2 { font-size: 14px; }
+    .an-content h3 { font-size: 13px; }
+    .an-content code {
       font-family: monospace;
       font-size: 12px;
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.08));
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
-      border-radius: 3px;
+      background: var(--lumiverse-fill-subtle);
       padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--lumiverse-border);
     }
-    .an-notes-body pre {
-      background: var(--lumiverse-fill-subtle, rgba(0,0,0,0.25));
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1));
-      border-radius: 6px;
-      padding: 10px 12px;
-      overflow-x: auto;
-      margin: 0 0 0.75em;
+    .an-content blockquote {
+      border-left: 3px solid var(--lumiverse-accent);
+      margin: 6px 0;
+      padding: 4px 10px;
+      color: var(--lumiverse-text-muted);
+      font-style: italic;
     }
-    .an-notes-body pre code {
-      background: none;
-      border: none;
-      padding: 0;
-      font-size: 12px;
+    .an-empty {
+      color: var(--lumiverse-text-dim);
+      font-style: italic;
+      font-size: 12.5px;
     }
-    .an-notes-body blockquote {
-      border-left: 3px solid var(--lumiverse-accent, #7c9fff);
-      margin: 0 0 0.75em;
-      padding: 6px 12px;
-      color: var(--lumiverse-text-dim, #aaa);
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.04));
-      border-radius: 0 4px 4px 0;
-    }
-    .an-notes-body hr {
-      border: none;
-      border-top: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
-      margin: 12px 0;
-    }
-    .an-notes-body table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-bottom: 0.75em;
-      font-size: 12px;
-    }
-    .an-notes-body th,
-    .an-notes-body td {
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
-      padding: 5px 8px;
-      text-align: left;
-    }
-    .an-notes-body th {
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.07));
-      font-weight: 600;
-    }
+  `);
 
-    /* \u2500\u2500 Plain-text fallback \u2500\u2500 */
-    .an-notes-plain {
-      white-space: pre-wrap;
-      font-size: 13px;
-      line-height: 1.65;
-      color: var(--lumiverse-text, #e8e8e8);
-      word-break: break-word;
-    }
+  // ─── Build panel ──────────────────────────────────────────────────────────
+  function buildPanel(notes) {
+    const isEmpty = !notes || notes.trim() === '';
+    const bodyContent = isEmpty
+      ? `<span class="an-empty">No creator notes available for this character.</span>`
+      : notes;
 
-    /* \u2500\u2500 No-notes notice \u2500\u2500 */
-    .an-no-notes {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      padding: 20px 16px;
-      text-align: center;
-      color: var(--lumiverse-text-dim, #888);
-    }
-    .an-no-notes svg { opacity: 0.3; }
-    .an-no-notes p { margin: 0; font-size: 13px; line-height: 1.5; }
-  </style>
-`;
-function looksLikeHtml(text) {
-  return /<[a-zA-Z][\s\S]*?>/.test(text);
-}
-function plainToHtml(text) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/^######\s+(.+)$/gm, "<h6>$1</h6>").replace(/^#####\s+(.+)$/gm, "<h5>$1</h5>").replace(/^####\s+(.+)$/gm, "<h4>$1</h4>").replace(/^###\s+(.+)$/gm, "<h3>$1</h3>").replace(/^##\s+(.+)$/gm, "<h2>$1</h2>").replace(/^#\s+(.+)$/gm, "<h1>$1</h1>").replace(/^---+$/gm, "<hr>").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(.+?)\*/g, "<em>$1</em>").replace(/`(.+?)`/g, "<code>$1</code>").replace(/\n/g, "<br>");
-}
-function init(ctx) {
-  const tab = ctx.ui.registerDrawerTab({
-    id: "author-notes",
-    title: "Author Notes",
-    shortName: "Auth No",
-    description: "View the current character's author notes",
-    keywords: ["author", "notes", "creator", "character", "info"],
-    headerTitle: "Author Notes",
-    iconSvg: ICON_SVG
-  });
-  tab.root.innerHTML = PANEL_STYLES + `
-    <div class="an-panel" id="an-panel">
-      <div class="an-empty" id="an-empty">
-        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4">
-          <path d="M14.5 2.5a2.121 2.121 0 0 1 3 3L6 17l-4 1 1-4 11.5-11.5z"/>
+    const openClass = isOpen ? ' open' : '';
+
+    return `<div id="${PANEL_ID}">
+      <button class="an-accordion-header" aria-expanded="${isOpen}" aria-controls="an-body-inner">
+        <svg class="an-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
         </svg>
-        <p>Open a character chat<br>to view their author notes here.</p>
+        <span class="an-title">Creator Notes</span>
+        <svg class="an-chevron${openClass}" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+             stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <div class="an-body${openClass}" id="an-body-inner" role="region">
+        <div class="an-content">${bodyContent}</div>
       </div>
+    </div>`;
+  }
 
-      <div id="an-char-section" style="display:none; flex-direction:column; height:100%;">
-        <div class="an-header">
-          <div class="an-header-avatar" id="an-avatar">\u{1F4DD}</div>
-          <span class="an-header-name" id="an-char-name">\u2014</span>
-          <button class="an-refresh-btn" id="an-refresh-btn" title="Refresh">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M1 4v6h6"/>
-              <path d="M19 16v-6h-6"/>
-              <path d="M17.51 9A8 8 0 0 0 3.22 6.22M2.49 11A8 8 0 0 0 16.78 13.78"/>
-            </svg>
-          </button>
-        </div>
-        <div class="an-content" id="an-content">
-          <!-- notes rendered here -->
-        </div>
-      </div>
-    </div>
-  `;
-  const emptyEl = tab.root.querySelector("#an-empty");
-  const charSection = tab.root.querySelector("#an-char-section");
-  const charNameEl = tab.root.querySelector("#an-char-name");
-  const contentEl = tab.root.querySelector("#an-content");
-  const refreshBtn = tab.root.querySelector("#an-refresh-btn");
-  let currentCharId = null;
-  let isLoading = false;
-  function showEmpty() {
-    emptyEl.style.display = "flex";
-    charSection.style.display = "none";
+  function attachToggle() {
+    const header = document.querySelector(`#${PANEL_ID} .an-accordion-header`);
+    const body = document.querySelector(`#${PANEL_ID} .an-body`);
+    const chevron = document.querySelector(`#${PANEL_ID} .an-chevron`);
+    if (!header || !body) return;
+    header.addEventListener('click', () => {
+      isOpen = !isOpen;
+      body.classList.toggle('open', isOpen);
+      chevron && chevron.classList.toggle('open', isOpen);
+      header.setAttribute('aria-expanded', String(isOpen));
+    });
   }
-  function showCharacter(name, notes) {
-    emptyEl.style.display = "none";
-    charSection.style.display = "flex";
-    charNameEl.textContent = name || "Unknown Character";
-    contentEl.innerHTML = "";
-    if (!notes || notes.trim() === "") {
-      contentEl.innerHTML = `
-        <div class="an-no-notes">
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4">
-            <path d="M14.5 2.5a2.121 2.121 0 0 1 3 3L6 17l-4 1 1-4 11.5-11.5z"/>
-          </svg>
-          <p>No author notes for <strong>${escapeHtml(name)}</strong>.</p>
-        </div>`;
-      return;
+
+  // ─── Find insertion anchor ─────────────────────────────────────────────────
+  // We try to land between the Description accordion and Personality accordion.
+  // Multiple selector strategies ordered by specificity.
+  function findInsertionAnchor() {
+    // 1. Spindle data-field attributes
+    const descField = document.querySelector('[data-field="description"]');
+    if (descField) {
+      return { parent: descField.parentElement, after: descField };
     }
-    if (looksLikeHtml(notes)) {
-      const wrapper = document.createElement("div");
-      wrapper.className = "an-notes-body";
-      wrapper.innerHTML = notes;
-      contentEl.appendChild(wrapper);
-    } else {
-      const wrapper = document.createElement("div");
-      wrapper.className = "an-notes-body";
-      wrapper.innerHTML = plainToHtml(notes);
-      contentEl.appendChild(wrapper);
-    }
-  }
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  function setRefreshSpinning(on) {
-    if (on) {
-      refreshBtn.classList.add("spinning");
-    } else {
-      refreshBtn.classList.remove("spinning");
-    }
-  }
-  function resolveCharacterIdFromDom() {
-    const el = document.querySelector("[data-character-id]");
-    if (el) return el.dataset.characterId ?? null;
-    const meta = document.querySelector("meta[name='lumiverse-character-id']");
-    if (meta) return meta.content || null;
-    return null;
-  }
-  function requestRefresh(charId) {
-    if (isLoading) return;
-    isLoading = true;
-    setRefreshSpinning(true);
-    const id = charId !== void 0 ? charId : currentCharId ?? resolveCharacterIdFromDom();
-    ctx.sendToBackend({ type: "fetch_author_notes", characterId: id });
-    setTimeout(() => {
-      isLoading = false;
-      setRefreshSpinning(false);
-    }, 8e3);
-  }
-  refreshBtn.addEventListener("click", () => {
-    requestRefresh();
-  });
-  ctx.onBackendMessage((payload) => {
-    if (payload?.type === "author_notes_update") {
-      isLoading = false;
-      setRefreshSpinning(false);
-      const { characterId, name, notes } = payload;
-      if (!characterId && !name) {
-        showEmpty();
-        currentCharId = null;
-      } else {
-        currentCharId = characterId;
-        showCharacter(name ?? "Unknown Character", notes);
-        tab.setBadge(notes && notes.trim() ? "\u2713" : null);
+
+    // 2. Walk accordion sections looking for "Description" followed by "Personality"
+    // Look for any element that contains ONLY "Description" as its label text
+    const candidates = Array.from(
+      document.querySelectorAll([
+        '[class*="accordion"] [class*="header"]',
+        '[class*="accordion"] [class*="label"]',
+        '[class*="section"] [class*="title"]',
+        '[class*="profile"] [class*="header"]',
+        '[class*="sidebar"] button',
+        '[class*="char"] [class*="section"]',
+        'details > summary',
+      ].join(', '))
+    );
+
+    for (const el of candidates) {
+      const text = el.textContent?.trim() ?? '';
+      if (/^description$/i.test(text)) {
+        // The section container is typically 1-2 levels up
+        let section = el.parentElement;
+        for (let i = 0; i < 4 && section; i++) {
+          const next = section.nextElementSibling;
+          if (next) {
+            const nextText = (next.textContent ?? '').toLowerCase();
+            if (nextText.includes('personality') && section.parentElement) {
+              return { parent: section.parentElement, after: section };
+            }
+          }
+          section = section.parentElement;
+        }
+        // Fallback: use immediate parent
+        if (el.parentElement?.parentElement) {
+          const sectionEl = el.parentElement;
+          return { parent: sectionEl.parentElement, after: sectionEl };
+        }
       }
     }
-    if (payload?.type === "chat_changed") {
-      const domId = resolveCharacterIdFromDom();
-      requestRefresh(domId);
+
+    // 3. data-spindle-mount profile area
+    const mounts = [
+      '[data-spindle-mount="character_profile"]',
+      '[data-spindle-mount="sidebar_profile"]',
+      '[data-spindle-mount="profile_tab"]',
+      '[data-spindle-mount="profile"]',
+    ];
+    for (const sel of mounts) {
+      const mount = document.querySelector(sel);
+      if (!mount) continue;
+      const children = Array.from(mount.children);
+      for (let i = 0; i < children.length; i++) {
+        const t = (children[i].textContent ?? '').toLowerCase();
+        if (t.includes('description') && i + 1 < children.length) {
+          return { parent: mount, after: children[i] };
+        }
+      }
     }
-  });
-  ctx.events.on("CHAT_CHANGED", (_payload) => {
-    setTimeout(() => {
-      const domId = resolveCharacterIdFromDom();
-      requestRefresh(domId);
-    }, 300);
-  });
-  ctx.events.on("CHARACTER_EDITED", (payload) => {
-    if (payload?.id && payload.id === currentCharId) {
-      requestRefresh(currentCharId);
-    }
-  });
-  tab.onActivate(() => {
-    const domId = resolveCharacterIdFromDom();
-    if (domId || currentCharId) {
-      requestRefresh(domId ?? currentCharId);
-    }
-  });
-  const initialId = resolveCharacterIdFromDom();
-  if (initialId) {
-    requestRefresh(initialId);
+
+    return null;
   }
+
+  // ─── Inject ────────────────────────────────────────────────────────────────
+  function removePanel() {
+    const el = document.getElementById(PANEL_ID);
+    if (el) {
+      // Remove including wrapper
+      const wrapper = el.parentElement;
+      el.remove();
+      if (wrapper && wrapper.dataset.anMount === '1') wrapper.remove();
+    }
+  }
+
+  function injectPanel(notes) {
+    removePanel();
+    const anchor = findInsertionAnchor();
+    if (!anchor) return; // profile tab not visible yet
+
+    const { parent, after } = anchor;
+
+    // Create a mount wrapper
+    const wrapper = document.createElement('div');
+    wrapper.dataset.anMount = '1';
+    wrapper.style.cssText = 'display:contents;width:100%';
+
+    if (after.nextSibling) {
+      parent.insertBefore(wrapper, after.nextSibling);
+    } else {
+      parent.appendChild(wrapper);
+    }
+
+    // Inject sanitized HTML via ctx.dom.inject
+    const tempId = 'an-mount-' + Math.random().toString(36).slice(2);
+    wrapper.id = tempId;
+    ctx.dom.inject('#' + tempId, buildPanel(notes), 'beforeend');
+    wrapper.id = ''; // clear temp id after inject
+
+    attachToggle();
+  }
+
+  function updateContent(notes) {
+    const existing = document.getElementById(PANEL_ID);
+    if (!existing) {
+      injectPanel(notes);
+      return;
+    }
+    const contentEl = existing.querySelector('.an-content');
+    if (!contentEl) return;
+
+    const isEmpty = !notes || notes.trim() === '';
+    const html = isEmpty
+      ? `<span class="an-empty">No creator notes available for this character.</span>`
+      : notes;
+
+    // Sanitize via a temp DOM inject
+    const tempId = 'an-content-tmp-' + Math.random().toString(36).slice(2);
+    const tmp = document.createElement('div');
+    tmp.id = tempId;
+    tmp.style.display = 'none';
+    document.body.appendChild(tmp);
+    ctx.dom.inject('#' + tempId, html, 'beforeend');
+    contentEl.innerHTML = tmp.innerHTML;
+    tmp.remove();
+  }
+
+  // ─── Detect active character ───────────────────────────────────────────────
+  function detectCharacterId() {
+    // data attributes (most reliable if Lumiverse sets them)
+    for (const attr of ['data-character-id', 'data-char-id', 'data-spindle-character-id']) {
+      const el = document.querySelector(`[${attr}]`);
+      if (el) {
+        const id = el.getAttribute(attr);
+        if (id) return id;
+      }
+    }
+    // URL path
+    const m = window.location.pathname.match(/\/characters?\/([a-zA-Z0-9_-]+)/);
+    if (m?.[1]) return m[1];
+    return null;
+  }
+
+  function isProfileVisible() {
+    return !!(
+      document.querySelector('[data-field="description"]') ||
+      document.querySelector('[data-spindle-mount="character_profile"]') ||
+      document.querySelector('[data-spindle-mount="sidebar_profile"]') ||
+      findInsertionAnchor()
+    );
+  }
+
+  // ─── Try inject logic ──────────────────────────────────────────────────────
+  function tryInject() {
+    if (!isProfileVisible()) return;
+    if (document.getElementById(PANEL_ID)) return; // already present
+
+    const charId = detectCharacterId();
+    if (charId) {
+      if (charId !== currentCharacterId) {
+        currentCharacterId = charId;
+        ctx.sendToBackend({ type: 'author_notes_request', characterId: charId });
+      } else {
+        // Already have notes, just inject
+        injectPanel(currentNotes);
+      }
+    } else {
+      // No character id detectable, inject empty panel
+      injectPanel(currentNotes);
+    }
+  }
+
+  // ─── MutationObserver ──────────────────────────────────────────────────────
+  let mutationDebounce = null;
+  observer = new MutationObserver(() => {
+    if (mutationDebounce) return;
+    mutationDebounce = requestAnimationFrame(() => {
+      mutationDebounce = null;
+      if (!document.getElementById(PANEL_ID)) {
+        tryInject();
+      }
+    });
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // ─── Backend messages ──────────────────────────────────────────────────────
+  const unsubBackend = ctx.onBackendMessage((payload) => {
+    if (payload.type === 'author_notes_data') {
+      currentCharacterId = payload.characterId;
+      currentNotes = payload.creatorNotes ?? '';
+
+      if (document.getElementById(PANEL_ID)) {
+        updateContent(currentNotes);
+      } else {
+        injectPanel(currentNotes);
+      }
+    }
+
+    if (payload.type === 'author_notes_chat_changed') {
+      setTimeout(() => {
+        const charId = detectCharacterId();
+        if (charId && charId !== currentCharacterId) {
+          currentCharacterId = charId;
+          ctx.sendToBackend({ type: 'author_notes_chat_changed', characterId: charId });
+        } else if (charId) {
+          tryInject();
+        }
+      }, 350);
+    }
+  });
+
+  // ─── Frontend events ───────────────────────────────────────────────────────
+  const unsubChat = ctx.events.on('CHAT_CHANGED', () => {
+    setTimeout(() => {
+      const charId = detectCharacterId();
+      if (charId && charId !== currentCharacterId) {
+        currentCharacterId = charId;
+        ctx.sendToBackend({ type: 'author_notes_request', characterId: charId });
+      }
+    }, 400);
+  });
+
+  const unsubChar = ctx.events.on('CHARACTER_EDITED', (payload) => {
+    const id = payload?.id ?? payload?.character?.id;
+    if (id && id === currentCharacterId) {
+      ctx.sendToBackend({ type: 'author_notes_request', characterId: id });
+    }
+  });
+
+  // ─── Initial ───────────────────────────────────────────────────────────────
+  setTimeout(() => tryInject(), 600);
+
+  // ─── Cleanup ───────────────────────────────────────────────────────────────
+  return () => {
+    unsubBackend();
+    unsubChat();
+    unsubChar();
+    observer && observer.disconnect();
+    if (pendingInjectTimer) clearTimeout(pendingInjectTimer);
+    removePanel();
+    removeStyle();
+    ctx.dom.cleanup();
+  };
 }
-export {
-  init as default
-};

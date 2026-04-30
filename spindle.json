@@ -1,14 +1,12 @@
 {
-  "identifier": "author_note_viewer",
-  "name": "Author Notes Viewer",
   "version": "1.0.0",
-  "description": "Displays the current character's author notes (creator_notes) in a dedicated drawer tab with full HTML and CSS formatting support.",
-  "author": "Binger",
-  "permissions": [
-    "characters"
-  ],
-  "entry": {
-    "backend": "dist/backend.js",
-    "frontend": "dist/frontend.js"
-  }
+  "name": "Author Notes",
+  "identifier": "author_notes",
+  "author": "author_notes",
+  "github": "https://github.com/author/author-notes",
+  "homepage": "https://github.com/author/author-notes",
+  "description": "Displays the current character's creator notes in a dropdown panel in the profile sidebar tab, between Description and Personality.",
+  "permissions": ["characters"],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js"
 }

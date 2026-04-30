@@ -1,453 +1,450 @@
-/**
- * Author Notes Viewer — Frontend Module
- *
- * Registers a "Auth No" drawer tab in the Lumiverse sidebar.
- * Displays the currently selected character's author/creator notes
- * with full HTML and CSS rendering enabled.
- */
+import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 
-// ── Icon SVG (pencil/notes icon, 20×20) ───────────────────────────────────
-const ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M14.5 2.5a2.121 2.121 0 0 1 3 3L6 17l-4 1 1-4 11.5-11.5z"/>
-</svg>`;
+export function setup(ctx: SpindleFrontendContext) {
 
-// ── Styles injected into the tab root ─────────────────────────────────────
-const PANEL_STYLES = `
-  <style>
-    .an-panel {
+  // ─── Constants ──────────────────────────────────────────────────────────────
+  const PANEL_ID = 'spindle-author-notes-panel'
+  const STYLE_ID = 'spindle-author-notes-styles'
+
+  // ─── State ───────────────────────────────────────────────────────────────────
+  let currentCharacterId: string | null = null
+  let currentNotes: string = ''
+  let isOpen = false
+  let observer: MutationObserver | null = null
+
+  // ─── Styles ──────────────────────────────────────────────────────────────────
+  const removeStyle = ctx.dom.addStyle(`
+    /* ── Author Notes accordion panel ── */
+    #${PANEL_ID} {
       display: flex;
       flex-direction: column;
-      height: 100%;
+      width: 100%;
       box-sizing: border-box;
-      font-family: inherit;
     }
 
-    /* ── Empty / loading states ── */
-    .an-empty {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      flex: 1;
-      padding: 24px;
-      text-align: center;
-      color: var(--lumiverse-text-dim, #888);
-    }
-    .an-empty svg {
-      opacity: 0.35;
-    }
-    .an-empty p {
-      margin: 0;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    /* ── Character header bar ── */
-    .an-header {
+    .an-accordion-header {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 14px 8px;
-      border-bottom: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1));
-      flex-shrink: 0;
-    }
-    .an-header-avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.07));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      flex-shrink: 0;
-      overflow: hidden;
-    }
-    .an-header-avatar img {
+      padding: 10px 14px;
+      cursor: pointer;
+      user-select: none;
+      background: transparent;
+      border: none;
       width: 100%;
-      height: 100%;
-      object-fit: cover;
-      border-radius: 50%;
+      text-align: left;
+      color: var(--lumiverse-text);
+      border-radius: var(--lumiverse-radius);
+      transition: background var(--lumiverse-transition-fast, 0.15s ease);
+      outline: none;
     }
-    .an-header-name {
+
+    .an-accordion-header:hover {
+      background: var(--lumiverse-fill-subtle);
+    }
+
+    .an-icon {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      color: var(--lumiverse-text-muted);
+      opacity: 0.75;
+    }
+
+    .an-title {
+      flex: 1;
       font-size: 13px;
       font-weight: 600;
-      color: var(--lumiverse-text, #fff);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
+      color: var(--lumiverse-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
-    .an-refresh-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--lumiverse-text-dim, #888);
-      padding: 4px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: color 0.15s, background 0.15s;
+
+    .an-chevron {
       flex-shrink: 0;
-    }
-    .an-refresh-btn:hover {
-      color: var(--lumiverse-text, #fff);
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.07));
-    }
-    .an-refresh-btn.spinning svg {
-      animation: an-spin 0.7s linear infinite;
-    }
-    @keyframes an-spin {
-      to { transform: rotate(360deg); }
+      width: 14px;
+      height: 14px;
+      color: var(--lumiverse-text-dim);
+      transition: transform var(--lumiverse-transition-fast, 0.15s ease);
     }
 
-    /* ── Notes content area ── */
+    .an-chevron.open {
+      transform: rotate(180deg);
+    }
+
+    .an-body {
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.22s ease, opacity 0.18s ease;
+      opacity: 0;
+    }
+
+    .an-body.open {
+      max-height: 2000px;
+      opacity: 1;
+    }
+
     .an-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 14px;
-      scrollbar-width: thin;
-      scrollbar-color: var(--lumiverse-border, rgba(255,255,255,0.15)) transparent;
-    }
-    .an-content::-webkit-scrollbar { width: 5px; }
-    .an-content::-webkit-scrollbar-track { background: transparent; }
-    .an-content::-webkit-scrollbar-thumb {
-      background: var(--lumiverse-border, rgba(255,255,255,0.15));
-      border-radius: 3px;
-    }
-
-    /* ── Rendered notes typography — these apply inside .an-notes-body ── */
-    .an-notes-body {
+      padding: 4px 14px 14px 14px;
       font-size: 13px;
-      line-height: 1.65;
-      color: var(--lumiverse-text, #e8e8e8);
+      line-height: 1.6;
+      color: var(--lumiverse-text);
       word-break: break-word;
     }
-    .an-notes-body h1,
-    .an-notes-body h2,
-    .an-notes-body h3,
-    .an-notes-body h4,
-    .an-notes-body h5,
-    .an-notes-body h6 {
-      margin: 1em 0 0.4em;
-      line-height: 1.3;
-      color: var(--lumiverse-text, #fff);
-      font-weight: 700;
+
+    /* Allow basic HTML formatting inside creator notes */
+    .an-content p { margin: 0 0 8px 0; }
+    .an-content p:last-child { margin-bottom: 0; }
+    .an-content a { color: var(--lumiverse-accent); text-decoration: underline; }
+    .an-content strong, .an-content b { font-weight: 600; }
+    .an-content em, .an-content i { font-style: italic; }
+    .an-content ul, .an-content ol { padding-left: 20px; margin: 6px 0; }
+    .an-content li { margin-bottom: 4px; }
+    .an-content hr { border: none; border-top: 1px solid var(--lumiverse-border); margin: 10px 0; }
+    .an-content h1, .an-content h2, .an-content h3 {
+      font-weight: 600;
+      margin: 10px 0 4px 0;
+      color: var(--lumiverse-text);
     }
-    .an-notes-body h1 { font-size: 18px; }
-    .an-notes-body h2 { font-size: 16px; }
-    .an-notes-body h3 { font-size: 14px; }
-    .an-notes-body h4,
-    .an-notes-body h5,
-    .an-notes-body h6 { font-size: 13px; }
-    .an-notes-body p { margin: 0 0 0.75em; }
-    .an-notes-body ul,
-    .an-notes-body ol {
-      padding-left: 20px;
-      margin: 0 0 0.75em;
-    }
-    .an-notes-body li { margin-bottom: 0.25em; }
-    .an-notes-body a {
-      color: var(--lumiverse-accent, #7c9fff);
-      text-decoration: none;
-    }
-    .an-notes-body a:hover { text-decoration: underline; }
-    .an-notes-body strong, .an-notes-body b { font-weight: 700; }
-    .an-notes-body em, .an-notes-body i { font-style: italic; }
-    .an-notes-body code {
+    .an-content h1 { font-size: 15px; }
+    .an-content h2 { font-size: 14px; }
+    .an-content h3 { font-size: 13px; }
+    .an-content code {
       font-family: monospace;
       font-size: 12px;
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.08));
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
-      border-radius: 3px;
+      background: var(--lumiverse-fill-subtle);
       padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--lumiverse-border);
     }
-    .an-notes-body pre {
-      background: var(--lumiverse-fill-subtle, rgba(0,0,0,0.25));
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.1));
-      border-radius: 6px;
-      padding: 10px 12px;
-      overflow-x: auto;
-      margin: 0 0 0.75em;
-    }
-    .an-notes-body pre code {
-      background: none;
-      border: none;
-      padding: 0;
-      font-size: 12px;
-    }
-    .an-notes-body blockquote {
-      border-left: 3px solid var(--lumiverse-accent, #7c9fff);
-      margin: 0 0 0.75em;
-      padding: 6px 12px;
-      color: var(--lumiverse-text-dim, #aaa);
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.04));
-      border-radius: 0 4px 4px 0;
-    }
-    .an-notes-body hr {
-      border: none;
-      border-top: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
-      margin: 12px 0;
-    }
-    .an-notes-body table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-bottom: 0.75em;
-      font-size: 12px;
-    }
-    .an-notes-body th,
-    .an-notes-body td {
-      border: 1px solid var(--lumiverse-border, rgba(255,255,255,0.12));
-      padding: 5px 8px;
-      text-align: left;
-    }
-    .an-notes-body th {
-      background: var(--lumiverse-fill-subtle, rgba(255,255,255,0.07));
-      font-weight: 600;
+    .an-content blockquote {
+      border-left: 3px solid var(--lumiverse-accent);
+      margin: 6px 0;
+      padding: 4px 10px;
+      color: var(--lumiverse-text-muted);
+      font-style: italic;
     }
 
-    /* ── Plain-text fallback ── */
-    .an-notes-plain {
-      white-space: pre-wrap;
-      font-size: 13px;
-      line-height: 1.65;
-      color: var(--lumiverse-text, #e8e8e8);
-      word-break: break-word;
+    .an-empty {
+      color: var(--lumiverse-text-dim);
+      font-style: italic;
+      font-size: 12.5px;
     }
+  `)
 
-    /* ── No-notes notice ── */
-    .an-no-notes {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      padding: 20px 16px;
-      text-align: center;
-      color: var(--lumiverse-text-dim, #888);
-    }
-    .an-no-notes svg { opacity: 0.3; }
-    .an-no-notes p { margin: 0; font-size: 13px; line-height: 1.5; }
-  </style>
-`;
+  // ─── SVGs ────────────────────────────────────────────────────────────────────
+  // Description icon (document/lines) — same as used by Description section
+  const descriptionIconSvg = `
+    <svg class="an-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/>
+      <polyline points="10 9 9 9 8 9"/>
+    </svg>`
 
-// ── Utility: detect whether a string contains HTML ────────────────────────
-function looksLikeHtml(text: string): boolean {
-  return /<[a-zA-Z][\s\S]*?>/.test(text);
-}
+  const chevronSvg = `
+    <svg class="an-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+         stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>`
 
-// ── Utility: convert plain text (with markdown-lite) to safe HTML ─────────
-function plainToHtml(text: string): string {
-  // Very lightweight markdown conversion for bold, italic, headings,
-  // horizontal rules, and line breaks — enough for typical author notes.
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/^######\s+(.+)$/gm, "<h6>$1</h6>")
-    .replace(/^#####\s+(.+)$/gm, "<h5>$1</h5>")
-    .replace(/^####\s+(.+)$/gm, "<h4>$1</h4>")
-    .replace(/^###\s+(.+)$/gm, "<h3>$1</h3>")
-    .replace(/^##\s+(.+)$/gm, "<h2>$1</h2>")
-    .replace(/^#\s+(.+)$/gm, "<h1>$1</h1>")
-    .replace(/^---+$/gm, "<hr>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`(.+?)`/g, "<code>$1</code>")
-    .replace(/\n/g, "<br>");
-}
+  // ─── Build panel HTML ────────────────────────────────────────────────────────
+  function buildPanelHTML(notes: string): string {
+    const isEmpty = !notes || notes.trim() === ''
+    const bodyContent = isEmpty
+      ? `<span class="an-empty">No creator notes available for this character.</span>`
+      : notes   // raw — DOMPurify will sanitize on inject
 
-// ── Main extension entry point ─────────────────────────────────────────────
-export default function init(ctx: any) {
-  // ── Register the drawer tab ──────────────────────────────────────────────
-  const tab = ctx.ui.registerDrawerTab({
-    id: "author-notes",
-    title: "Author Notes",
-    shortName: "Auth No",
-    description: "View the current character's author notes",
-    keywords: ["author", "notes", "creator", "character", "info"],
-    headerTitle: "Author Notes",
-    iconSvg: ICON_SVG,
-  });
-
-  // ── Build initial DOM ────────────────────────────────────────────────────
-  tab.root.innerHTML = PANEL_STYLES + `
-    <div class="an-panel" id="an-panel">
-      <div class="an-empty" id="an-empty">
-        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4">
-          <path d="M14.5 2.5a2.121 2.121 0 0 1 3 3L6 17l-4 1 1-4 11.5-11.5z"/>
-        </svg>
-        <p>Open a character chat<br>to view their author notes here.</p>
-      </div>
-
-      <div id="an-char-section" style="display:none; flex-direction:column; height:100%;">
-        <div class="an-header">
-          <div class="an-header-avatar" id="an-avatar">📝</div>
-          <span class="an-header-name" id="an-char-name">—</span>
-          <button class="an-refresh-btn" id="an-refresh-btn" title="Refresh">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M1 4v6h6"/>
-              <path d="M19 16v-6h-6"/>
-              <path d="M17.51 9A8 8 0 0 0 3.22 6.22M2.49 11A8 8 0 0 0 16.78 13.78"/>
-            </svg>
-          </button>
-        </div>
-        <div class="an-content" id="an-content">
-          <!-- notes rendered here -->
-        </div>
-      </div>
-    </div>
-  `;
-
-  // ── Element references ───────────────────────────────────────────────────
-  const emptyEl       = tab.root.querySelector("#an-empty") as HTMLElement;
-  const charSection   = tab.root.querySelector("#an-char-section") as HTMLElement;
-  const charNameEl    = tab.root.querySelector("#an-char-name") as HTMLElement;
-  const contentEl     = tab.root.querySelector("#an-content") as HTMLElement;
-  const refreshBtn    = tab.root.querySelector("#an-refresh-btn") as HTMLButtonElement;
-
-  // ── State ────────────────────────────────────────────────────────────────
-  let currentCharId: string | null = null;
-  let isLoading = false;
-
-  // ── Render helpers ───────────────────────────────────────────────────────
-  function showEmpty() {
-    emptyEl.style.display = "flex";
-    charSection.style.display = "none";
-  }
-
-  function showCharacter(name: string, notes: string | null) {
-    emptyEl.style.display = "none";
-    charSection.style.display = "flex";
-    charNameEl.textContent = name || "Unknown Character";
-
-    contentEl.innerHTML = "";
-
-    if (!notes || notes.trim() === "") {
-      contentEl.innerHTML = `
-        <div class="an-no-notes">
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4">
-            <path d="M14.5 2.5a2.121 2.121 0 0 1 3 3L6 17l-4 1 1-4 11.5-11.5z"/>
+    return `
+      <div id="${PANEL_ID}">
+        <button class="an-accordion-header" aria-expanded="${isOpen}" aria-controls="an-body-inner">
+          ${descriptionIconSvg}
+          <span class="an-title">Creator Notes</span>
+          <svg class="an-chevron${isOpen ? ' open' : ''}" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+               stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+            <polyline points="6 9 12 15 18 9"/>
           </svg>
-          <p>No author notes for <strong>${escapeHtml(name)}</strong>.</p>
-        </div>`;
-      return;
+        </button>
+        <div class="an-body${isOpen ? ' open' : ''}" id="an-body-inner" role="region">
+          <div class="an-content">${bodyContent}</div>
+        </div>
+      </div>
+    `
+  }
+
+  // ─── Toggle open/close ────────────────────────────────────────────────────────
+  function attachToggle(): void {
+    const header = document.querySelector(`#${PANEL_ID} .an-accordion-header`) as HTMLButtonElement | null
+    const body = document.querySelector(`#${PANEL_ID} .an-body`) as HTMLElement | null
+    const chevron = document.querySelector(`#${PANEL_ID} .an-chevron`) as HTMLElement | null
+
+    if (!header || !body) return
+
+    header.addEventListener('click', () => {
+      isOpen = !isOpen
+      body.classList.toggle('open', isOpen)
+      chevron?.classList.toggle('open', isOpen)
+      header.setAttribute('aria-expanded', String(isOpen))
+    })
+  }
+
+  // ─── Find insertion point ─────────────────────────────────────────────────────
+  //
+  // The profile tab renders accordion items for Description, Personality, etc.
+  // We look for the element containing "Description" text and insert our panel
+  // directly after it (before Personality). We try several selector strategies
+  // to be robust against minor DOM changes.
+  //
+  function findInsertionPoint(): { parent: Element; after: Element } | null {
+    // Strategy 1: data-field attributes (ideal)
+    const descByAttr = document.querySelector('[data-field="description"]')
+    if (descByAttr?.parentElement) {
+      return { parent: descByAttr.parentElement, after: descByAttr }
     }
 
-    if (looksLikeHtml(notes)) {
-      // HTML content — render directly (DOMPurify is applied by Lumiverse)
-      const wrapper = document.createElement("div");
-      wrapper.className = "an-notes-body";
-      wrapper.innerHTML = notes;
-      contentEl.appendChild(wrapper);
-    } else {
-      // Plain text / light markdown
-      const wrapper = document.createElement("div");
-      wrapper.className = "an-notes-body";
-      wrapper.innerHTML = plainToHtml(notes);
-      contentEl.appendChild(wrapper);
-    }
-  }
-
-  function escapeHtml(s: string): string {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-
-  function setRefreshSpinning(on: boolean) {
-    if (on) {
-      refreshBtn.classList.add("spinning");
-    } else {
-      refreshBtn.classList.remove("spinning");
-    }
-  }
-
-  // ── Try to resolve active character from the DOM ─────────────────────────
-  // Lumiverse renders the character name or ID somewhere in the chat header.
-  // We look for common data attributes / selectors. If we can't find it we
-  // ask the backend for anything it cached from the last CHAT_CHANGED event.
-  function resolveCharacterIdFromDom(): string | null {
-    // Try data-character-id attribute on body or known elements
-    const el = document.querySelector("[data-character-id]");
-    if (el) return (el as HTMLElement).dataset.characterId ?? null;
-
-    // Try meta tag or other common patterns Lumiverse might use
-    const meta = document.querySelector("meta[name='lumiverse-character-id']");
-    if (meta) return (meta as HTMLMetaElement).content || null;
-
-    return null;
-  }
-
-  // ── Request a refresh from backend ──────────────────────────────────────
-  function requestRefresh(charId?: string | null) {
-    if (isLoading) return;
-    isLoading = true;
-    setRefreshSpinning(true);
-
-    const id = charId !== undefined ? charId : (currentCharId ?? resolveCharacterIdFromDom());
-    ctx.sendToBackend({ type: "fetch_author_notes", characterId: id });
-
-    // Safety timeout in case backend never replies
-    setTimeout(() => {
-      isLoading = false;
-      setRefreshSpinning(false);
-    }, 8000);
-  }
-
-  // ── Refresh button ───────────────────────────────────────────────────────
-  refreshBtn.addEventListener("click", () => {
-    requestRefresh();
-  });
-
-  // ── Backend messages ─────────────────────────────────────────────────────
-  ctx.onBackendMessage((payload: any) => {
-    if (payload?.type === "author_notes_update") {
-      isLoading = false;
-      setRefreshSpinning(false);
-
-      const { characterId, name, notes } = payload;
-      if (!characterId && !name) {
-        showEmpty();
-        currentCharId = null;
-      } else {
-        currentCharId = characterId;
-        showCharacter(name ?? "Unknown Character", notes);
-        tab.setBadge(notes && notes.trim() ? "✓" : null);
+    // Strategy 2: Look for accordion headers whose text contains "Description"
+    // Lumiverse uses uppercase section labels
+    const allHeaders = Array.from(document.querySelectorAll('button, [role="button"], .section-header, h3, h4, label'))
+    for (const el of allHeaders) {
+      const text = el.textContent?.trim().toLowerCase() ?? ''
+      if (text === 'description' || text.startsWith('description')) {
+        // Walk up to find the containing section wrapper
+        let section: Element | null = el
+        for (let i = 0; i < 5; i++) {
+          if (!section?.parentElement) break
+          section = section.parentElement
+          // If the parent contains a sibling that says "personality", this is the right level
+          const sibling = section.nextElementSibling
+          if (sibling) {
+            const sibText = sibling.textContent?.toLowerCase() ?? ''
+            if (sibText.includes('personality')) {
+              return { parent: section.parentElement!, after: section }
+            }
+          }
+        }
+        // Fallback: use the immediate parent of the header element
+        if (el.parentElement) {
+          return { parent: el.parentElement, after: el }
+        }
       }
     }
 
-    if (payload?.type === "chat_changed") {
-      // Chat changed; resolve new character
-      const domId = resolveCharacterIdFromDom();
-      requestRefresh(domId);
+    // Strategy 3: Use data-spindle-mount attribute for sidebar profile area
+    const profileMount = document.querySelector('[data-spindle-mount="character_profile"]')
+      ?? document.querySelector('[data-spindle-mount="sidebar_profile"]')
+      ?? document.querySelector('[data-spindle-mount="profile"]')
+    if (profileMount) {
+      const children = Array.from(profileMount.children)
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i]
+        const text = child.textContent?.toLowerCase() ?? ''
+        if (text.includes('description') && i + 1 < children.length) {
+          return { parent: profileMount, after: child }
+        }
+      }
     }
-  });
 
-  // ── Listen for chat/character changes via frontend events ────────────────
-  ctx.events.on("CHAT_CHANGED", (_payload: any) => {
+    return null
+  }
+
+  // ─── Inject / update panel ───────────────────────────────────────────────────
+  function removeExistingPanel(): void {
+    const existing = document.getElementById(PANEL_ID)
+    if (existing) existing.remove()
+  }
+
+  function injectPanel(notes: string): void {
+    removeExistingPanel()
+
+    const insertion = findInsertionPoint()
+    if (!insertion) {
+      // Could not find the profile tab DOM — silently do nothing
+      return
+    }
+
+    const { parent, after } = insertion
+    const wrapper = document.createElement('div')
+    // We inject via innerHTML on a temp element so DOMPurify (via ctx.dom.inject) sanitizes.
+    // However ctx.dom.inject requires a selector string. We'll use a temp id trick:
+    const tempId = 'an-temp-mount-' + Date.now()
+    wrapper.id = tempId
+    // Insert wrapper after the "Description" section
+    if (after.nextSibling) {
+      parent.insertBefore(wrapper, after.nextSibling)
+    } else {
+      parent.appendChild(wrapper)
+    }
+
+    // Use ctx.dom.inject to sanitize and inject the HTML into our wrapper
+    ctx.dom.inject(`#${tempId}`, buildPanelHTML(notes), 'beforeend')
+
+    // Remove the wrapper div (the panel itself is now in the DOM)
+    // Actually keep it — it acts as the mount host. Just give it a clean id.
+    wrapper.id = ''
+    wrapper.style.cssText = 'display:contents'
+
+    attachToggle()
+  }
+
+  function updatePanelContent(notes: string): void {
+    const existing = document.getElementById(PANEL_ID)
+    if (!existing) {
+      injectPanel(notes)
+      return
+    }
+
+    // Update only the content area
+    const contentEl = existing.querySelector('.an-content')
+    if (contentEl) {
+      const isEmpty = !notes || notes.trim() === ''
+      // Use a temp wrapper to get sanitized HTML
+      const tempWrapper = document.createElement('div')
+      tempWrapper.id = 'an-temp-content-' + Date.now()
+      tempWrapper.style.display = 'none'
+      document.body.appendChild(tempWrapper)
+      const innerHTML = isEmpty
+        ? `<span class="an-empty">No creator notes available for this character.</span>`
+        : notes
+      ctx.dom.inject(`#${tempWrapper.id}`, innerHTML, 'beforeend')
+      contentEl.innerHTML = tempWrapper.innerHTML
+      tempWrapper.remove()
+    }
+  }
+
+  // ─── Detect active character from the DOM ─────────────────────────────────────
+  //
+  // Lumiverse renders character ID as data attributes or in the URL. We look for
+  // the most reliable signal available.
+  //
+  function detectActiveCharacterId(): string | null {
+    // data-character-id on a parent element of the profile area
+    const withId = document.querySelector('[data-character-id]') as HTMLElement | null
+    if (withId?.dataset?.characterId) return withId.dataset.characterId
+
+    // data-char-id
+    const withCharId = document.querySelector('[data-char-id]') as HTMLElement | null
+    if (withCharId?.dataset?.charId) return withCharId.dataset.charId
+
+    // href/URL based — some SPAs encode characterId in the URL path
+    const match = window.location.pathname.match(/\/character(?:s)?\/([a-zA-Z0-9_-]+)/)
+    if (match?.[1]) return match[1]
+
+    // data-spindle-character-id (spindle standard)
+    const spindleEl = document.querySelector('[data-spindle-character-id]') as HTMLElement | null
+    if (spindleEl?.dataset?.spindleCharacterId) return spindleEl.dataset.spindleCharacterId
+
+    return null
+  }
+
+  // ─── Profile tab presence check ───────────────────────────────────────────────
+  function isProfileTabActive(): boolean {
+    // Look for known profile panel markers
+    return !!(
+      document.querySelector('[data-spindle-mount="character_profile"]') ??
+      document.querySelector('[data-spindle-mount="sidebar_profile"]') ??
+      document.querySelector('[data-field="description"]') ??
+      // Fallback: check if our insertion point exists
+      findInsertionPoint()
+    )
+  }
+
+  // ─── Main injection logic ─────────────────────────────────────────────────────
+  function tryInject(): void {
+    if (!isProfileTabActive()) return
+    if (document.getElementById(PANEL_ID)) return // already injected
+
+    const charId = detectActiveCharacterId()
+    if (charId && charId !== currentCharacterId) {
+      currentCharacterId = charId
+      ctx.sendToBackend({ type: 'author_notes_request', characterId: charId })
+    } else if (charId && currentNotes !== undefined) {
+      injectPanel(currentNotes)
+    }
+  }
+
+  // ─── MutationObserver — watch for profile tab mounting ───────────────────────
+  observer = new MutationObserver((_mutations) => {
+    // Debounce slightly so we don't fire on every micro-mutation
+    requestAnimationFrame(() => {
+      // If panel was removed (e.g. tab switch), try re-inject
+      if (!document.getElementById(PANEL_ID)) {
+        tryInject()
+      }
+    })
+  })
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+  })
+
+  // ─── Frontend events ──────────────────────────────────────────────────────────
+  // Listen for chat changes from backend (backend pushes this on CHAT_CHANGED)
+  const unsubBackend = ctx.onBackendMessage((payload: any) => {
+    if (payload.type === 'author_notes_data') {
+      currentCharacterId = payload.characterId
+      currentNotes = payload.creatorNotes ?? ''
+
+      const panel = document.getElementById(PANEL_ID)
+      if (panel) {
+        updatePanelContent(currentNotes)
+      } else {
+        injectPanel(currentNotes)
+      }
+    }
+
+    if (payload.type === 'author_notes_chat_changed') {
+      // Re-detect character after a brief delay (DOM updates after chat switch)
+      setTimeout(() => {
+        const charId = detectActiveCharacterId()
+        if (charId) {
+          if (charId !== currentCharacterId) {
+            currentCharacterId = charId
+            ctx.sendToBackend({
+              type: 'author_notes_chat_changed',
+              characterId: charId,
+            })
+          } else {
+            tryInject()
+          }
+        }
+      }, 300)
+    }
+  })
+
+  // Also listen to frontend chat changed events
+  const unsubChatChanged = ctx.events.on('CHAT_CHANGED', (_payload: any) => {
     setTimeout(() => {
-      const domId = resolveCharacterIdFromDom();
-      requestRefresh(domId);
-    }, 300); // brief delay to let the DOM settle
-  });
+      const charId = detectActiveCharacterId()
+      if (charId && charId !== currentCharacterId) {
+        currentCharacterId = charId
+        ctx.sendToBackend({ type: 'author_notes_request', characterId: charId })
+      }
+    }, 400)
+  })
 
-  ctx.events.on("CHARACTER_EDITED", (payload: any) => {
-    if (payload?.id && payload.id === currentCharId) {
-      requestRefresh(currentCharId);
+  // Character edited in frontend
+  const unsubCharEdited = ctx.events.on('CHARACTER_EDITED', (payload: any) => {
+    const id = payload?.id ?? payload?.character?.id
+    if (id && id === currentCharacterId) {
+      ctx.sendToBackend({ type: 'author_notes_request', characterId: id })
     }
-  });
+  })
 
-  // ── On tab activation — refresh if we have a character ──────────────────
-  tab.onActivate(() => {
-    const domId = resolveCharacterIdFromDom();
-    if (domId || currentCharId) {
-      requestRefresh(domId ?? currentCharId);
-    }
-  });
+  // Initial injection attempt
+  setTimeout(() => tryInject(), 500)
 
-  // ── Initial load attempt ─────────────────────────────────────────────────
-  const initialId = resolveCharacterIdFromDom();
-  if (initialId) {
-    requestRefresh(initialId);
+  // ─── Cleanup ──────────────────────────────────────────────────────────────────
+  return () => {
+    unsubBackend()
+    unsubChatChanged()
+    unsubCharEdited()
+    observer?.disconnect()
+    removeExistingPanel()
+    removeStyle()
+    ctx.dom.cleanup()
   }
 }

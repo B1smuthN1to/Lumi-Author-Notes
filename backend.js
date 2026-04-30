@@ -1,41 +1,66 @@
-"use strict";
+// Author Notes — backend.js (compiled from src/backend.ts)
+// Permission required: characters
 
-// src/backend.ts
-async function pushNotesForCharacter(characterId) {
-  if (!characterId) {
-    spindle.sendToFrontend({ type: "author_notes_update", characterId: null, notes: null, name: null });
-    return;
-  }
+let currentCharacterId = null;
+
+async function sendCharacterNotes(characterId) {
   try {
-    const char = await spindle.characters.get(characterId);
-    if (!char) {
-      spindle.sendToFrontend({ type: "author_notes_update", characterId, notes: null, name: null });
+    const character = await spindle.characters.get(characterId);
+    if (!character) {
+      spindle.sendToFrontend({
+        type: 'author_notes_data',
+        characterId,
+        characterName: '',
+        creatorNotes: '',
+        found: false,
+      });
       return;
     }
     spindle.sendToFrontend({
-      type: "author_notes_update",
-      characterId: char.id,
-      name: char.name,
-      notes: char.creator_notes ?? null
+      type: 'author_notes_data',
+      characterId: character.id,
+      characterName: character.name,
+      creatorNotes: character.creator_notes ?? '',
+      found: true,
     });
   } catch (err) {
-    spindle.log.warn(`[AuthorNotes] Failed to fetch character ${characterId}: ${err?.message}`);
-    spindle.sendToFrontend({ type: "author_notes_update", characterId, notes: null, name: null });
+    spindle.log.warn(`[author_notes] Failed to fetch character ${characterId}: ${err?.message}`);
+    spindle.sendToFrontend({
+      type: 'author_notes_data',
+      characterId,
+      characterName: '',
+      creatorNotes: '',
+      found: false,
+    });
   }
 }
-spindle.log.info("[AuthorNotes] Backend started.");
+
 spindle.onFrontendMessage(async (payload) => {
-  if (payload?.type === "fetch_author_notes") {
-    await pushNotesForCharacter(payload.characterId ?? null);
+  if (payload.type === 'author_notes_request') {
+    const id = payload.characterId;
+    if (id) {
+      currentCharacterId = id;
+      await sendCharacterNotes(id);
+    }
+  }
+
+  if (payload.type === 'author_notes_chat_changed') {
+    if (payload.characterId) {
+      currentCharacterId = payload.characterId;
+      await sendCharacterNotes(payload.characterId);
+    }
   }
 });
-spindle.on("CHAT_CHANGED", async (payload) => {
-  spindle.sendToFrontend({ type: "chat_changed", chatId: payload?.chatId ?? null });
+
+spindle.on('CHAT_CHANGED', (_payload) => {
+  spindle.sendToFrontend({ type: 'author_notes_chat_changed' });
 });
-spindle.on("CHARACTER_EDITED", async (payload) => {
-  const id = payload?.id;
-  if (id) {
-    spindle.log.info(`[AuthorNotes] Character edited: ${id} \u2014 refreshing notes.`);
-    await pushNotesForCharacter(id);
+
+spindle.on('CHARACTER_EDITED', async (payload) => {
+  const id = payload?.id ?? payload?.character?.id;
+  if (id && id === currentCharacterId) {
+    await sendCharacterNotes(id);
   }
 });
+
+spindle.log.info('[author_notes] Backend loaded.');
