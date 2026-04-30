@@ -1,9 +1,9 @@
 {
-  "id": "authornote",
+  "id": "author_note_viewer",
   "name": "Author Notes Viewer",
   "version": "1.0.0",
   "description": "Displays the current character's author notes (creator_notes) in a dedicated drawer tab with full HTML and CSS formatting support.",
-  "author": "author-notes-viewer",
+  "author": "Binger",
   "permissions": [
     "characters"
   ],
